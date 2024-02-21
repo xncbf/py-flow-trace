@@ -74,7 +74,11 @@ class EventAnalysisVisitor(ast.NodeVisitor):
             if callee not in self.builtin_modules:
                 # 현재 클래스와 메서드 정보를 기반으로 호출자(caller) 식별
                 if self.current_class and self.current_method:
-                    caller = f"{get_module_path(self.current_file)}.{self.current_class}.{self.current_method}"
+                    if self.current_method == "__init__":
+                        # 생성자 호출은 클래스 이름으로 기록
+                        caller = f"{get_module_path(self.current_file)}.{self.current_class}"
+                    else:
+                        caller = f"{get_module_path(self.current_file)}.{self.current_class}.{self.current_method}"
                 elif self.current_class:
                     caller = f"{get_module_path(self.current_file)}.{self.current_class}"
                 else:
@@ -119,7 +123,7 @@ def walk_and_analyze(directory, ignore_list):
 def load_config():
     default_settings = {
         "ignore_list": ["__pycache__", ".git", ".venv", "venv", "env", "alembic"],
-        "third_party_modules": [],
+        "third_party_modules": ["pydantic", "sqlalchemy", "alembic", "fastapi"],
         "path": ".",
     }
 
@@ -152,7 +156,6 @@ html = f"""
     <title>Call Relations Visualization</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-sankey/0.12.3/d3-sankey.min.js"></script>
-
     <style>
         .node rect {{
             cursor: move;
@@ -167,14 +170,18 @@ html = f"""
             fill: none;
             stroke: #000;
             stroke-opacity: .2;
+            stroke-width: 0;
         }}
         .link:hover {{
             stroke-opacity: .5;
         }}
+        .sankey-arrow {{
+            fill: #000;
+        }}
     </style>
 </head>
 <body>
-    <svg width="3600" height="1100"></svg>
+    <svg width="1600" height="20000"></svg> <!-- 높이를 늘림 -->
     <script>
         const data = {json_data};
         var sankeyData = {{
@@ -222,12 +229,15 @@ html = f"""
 
         var sankey = d3.sankey()
             .nodeWidth(15)
-            .nodePadding(10)
+            .nodePadding(15)
             .extent([[1, 1], [width - 1, height - 5]]);
+
 
         var path = sankey.links();
 
         sankey(sankeyData);
+        var color = d3.scaleOrdinal(d3.schemeCategory10);
+        svg.append("defs").selectAll("marker")
 
         var link = svg.append("g")
             .selectAll(".link")
