@@ -150,92 +150,139 @@ html = f"""
 <html>
 <head>
     <title>Call Relations Visualization</title>
-    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-sankey/0.12.3/d3-sankey.min.js"></script>
+
     <style>
-        .link {{ stroke: #999; stroke-opacity: 0.6; stroke-width: 1px; }}
-        .node {{ stroke: #fff; stroke-width: 1.5px; }}
-        .node text {{ font: 12px sans-serif; pointer-events: none; }}
+        .node rect {{
+            cursor: move;
+            fill-opacity: .9;
+            shape-rendering: crispEdges;
+        }}
+        .node text {{
+            pointer-events: none;
+            text-shadow: 0 1px 0 #fff;
+        }}
+        .link {{
+            fill: none;
+            stroke: #000;
+            stroke-opacity: .2;
+        }}
+        .link:hover {{
+            stroke-opacity: .5;
+        }}
     </style>
 </head>
 <body>
+    <svg width="3600" height="1100"></svg>
     <script>
         const data = {json_data};
-        // 시각화 로직 작성
-        const width = 2000, height = 1500;
+        var sankeyData = {{
+            nodes: [],
+            links: []
+        }};
 
-        const links = [];
-        const nodes = {{}};
+        // 노드 이름을 추적하기 위한 임시 맵
+        let nodeMap = {{}};
 
-        Object.entries(data).forEach(([caller, callees]) => {{
-            Object.entries(callees).forEach(([callee, count]) => {{
-                links.push({{ source: caller, target: callee, count: count }});
-                nodes[caller] = {{ id: caller }};
-                nodes[callee] = {{ id: callee }};
-            }});
-        }});
+        // 노드를 만들고 맵에 추가하는 함수
+        function getOrCreateNode(name) {{
+            if (!nodeMap.hasOwnProperty(name)) {{
+                nodeMap[name] = {{
+                name: name,
+                nodeIndex: sankeyData.nodes.length
+                }};
+                sankeyData.nodes.push({{ name: name }});
+            }}
+            return nodeMap[name].nodeIndex;
+        }}
 
-        const svg = d3.select("body").append("svg")
-            .attr("width", width)
-            .attr("height", height);
+        // 원본 데이터를 Sankey 데이터 형식으로 변환
+        for (let caller in data) {{
+            for (let callee in data[caller]) {{
+                var sourceIndex = getOrCreateNode(caller);
+                var targetIndex = getOrCreateNode(callee);
+                var value = data[caller][callee];
 
-        const simulation = d3.forceSimulation(Object.values(nodes))
-            .force("link", d3.forceLink(links).id(d => d.id))
-            .force("charge", d3.forceManyBody())
-            .force("center", d3.forceCenter(width / 2, height / 2));
+                sankeyData.links.push({{
+                source: sourceIndex,
+                target: targetIndex,
+                value: value
+                }});
+            }}
+        }}
 
-        const link = svg.append("g")
-            .attr("class", "links")
-            .selectAll("line")
-            .data(links)
-            .enter().append("line")
-            .attr("class", "link");
+        var svg = d3.select("svg"),
+            width = +svg.attr("width"),
+            height = +svg.attr("height");
 
-        const node = svg.append("g")
-            .attr("class", "nodes")
-            .selectAll("g")
-            .data(Object.values(nodes))
-            .enter().append("g");
+        var formatNumber = d3.format(",.0f"),
+            format = function(d) {{ return formatNumber(d) + " TWh"; }},
+            color = d3.scaleOrdinal(d3.schemeCategory10);
 
-        node.append("circle")
-            .attr("r", 5)
-            .call(d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended));
+        var sankey = d3.sankey()
+            .nodeWidth(15)
+            .nodePadding(10)
+            .extent([[1, 1], [width - 1, height - 5]]);
+
+        var path = sankey.links();
+
+        sankey(sankeyData);
+
+        var link = svg.append("g")
+            .selectAll(".link")
+            .data(sankeyData.links)
+            .enter().append("path")
+              .attr("class", "link")
+              .attr("d", path)
+              .style("stroke-width", function(d) {{ return Math.max(1, d.width); }})
+              .sort(function(a, b) {{ return b.width - a.width; }});
+
+        link.append("title")
+            .text(function(d) {{ return d.source.name + " → " + d.target.name + "\\n" + format(d.value); }});
+
+        var node = svg.append("g")
+            .selectAll(".node")
+            .data(sankeyData.nodes)
+            .enter().append("g")
+              .attr("class", "node")
+              .attr("transform", function(d) {{ return "translate(" + d.x0 + "," + d.y0 + ")"; }})
+              .call(d3.drag()
+                  .subject(function(d) {{ return d; }})
+                  .on("start", function() {{ this.parentNode.appendChild(this); }})
+                  .on("drag", dragmove));
+
+        node.append("rect")
+            .attr("height", function(d) {{ return d.y1 - d.y0; }})
+            .attr("width", sankey.nodeWidth())
+            .style("fill", function(d) {{ return d.color = color(d.name.replace(/ .*/, "")); }})
+            .style("stroke", function(d) {{ return d3.rgb(d.color).darker(2); }})
+            .append("title")
+            .text(function(d) {{ return d.name + "\\n" + format(d.value); }});
 
         node.append("text")
-            .text(d => d.id)
-            .attr("x", 8)
-            .attr("y", "0.31em");
+            .attr("x", -6)
+            .attr("y", function(d) {{ return (d.y1 - d.y0) / 2; }})
+            .attr("dy", "0.35em")
+            .attr("text-anchor", "end")
+            .text(function(d) {{ return d.name; }})
+            .filter(function(d) {{ return d.x0 < width / 2; }})
+            .attr("x", 6 + sankey.nodeWidth())
+            .attr("text-anchor", "start");
+            // dragmove function to enable node dragging
+        function dragmove(d) {{
+            var rectY = d3.event.y;
+            var rectX = d3.event.x;
 
-        simulation.on("tick", () => {{
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
+            d3.select(this)
+            .attr("transform", "translate("
+                + rectX + ","
+                + (d.y0 = Math.max(
+                    0, Math.min(height - (d.y1 - d.y0), rectY))) + ")");
 
-            node
-                .attr("transform", d => `translate(${{d.x}},${{d.y}})`);
-        }});
-
-        function dragstarted(d) {{
-            if (!d3.event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
+            sankey.update(sankeyData);
+            link.attr("d", path);
         }}
-
-        function dragged(d) {{
-            d.fx = d3.event.x;
-            d.fy = d3.event.y;
-        }}
-
-        function dragended(d) {{
-            if (!d3.event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-        }}
-
     </script>
 </body>
 </html>
